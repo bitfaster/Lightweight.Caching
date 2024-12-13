@@ -104,7 +104,7 @@ namespace BitFaster.Caching.ThroughputAnalysis
             void action(int index)
             {
                 long[] samples = config.GetTestData(index);
-                int func(long x) => (int)x;
+                int func(long x) => Spread(Spread(Spread(Hash32(x))));
 
                 for (int i = 0; i < config.Iterations; i++)
                 {
@@ -139,6 +139,30 @@ namespace BitFaster.Caching.ThroughputAnalysis
 
             // throughput = million ops/sec
             return throughput;
+        }
+
+        // https://lemire.me/blog/2018/08/15/fast-strongly-universal-64-bit-hashing-everywhere/
+        private static readonly long a = 46601;
+        private static long b = 471486146934863;
+        private static long c = 7411438065634025597l;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int Hash32(long x)
+        {
+            int low = (int)x;
+            int high = (int)((uint)x >> 32);
+            return (int)((uint)(a * low + b * high + c) >> 32);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int Spread(int x)
+        {
+            x ^= (int)((uint)x >> 17);
+            x = (int)(x * 0xed5ad4bb);
+            x ^= (int)((uint)x >> 11);
+            x = (int)(x * 0xac4c1b51);
+            x ^= (int)((uint)x >> 15);
+            return x;
         }
     }
 
