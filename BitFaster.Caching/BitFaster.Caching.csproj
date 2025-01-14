@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;netcoreapp3.1;net6.0</TargetFrameworks>
-    <LangVersion>11.0</LangVersion>
+    <TargetFrameworks>netstandard2.0;netcoreapp3.1;net6.0;net9.0</TargetFrameworks>
+    <LangVersion>13.0</LangVersion>
     <Authors>Alex Peck</Authors>
     <Company />
     <Product>BitFaster.Caching</Product>

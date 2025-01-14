@@ -25,6 +25,7 @@ jobs:
         dotnet-version: |
           6.0.x
           8.0.x
+          9.0.x
     - name: Install dependencies
       run: dotnet restore
     - name: Build
@@ -60,6 +61,7 @@ jobs:
         dotnet-version: |
           6.0.x
           8.0.x
+          9.0.x
     - name: Install dependencies
       run: dotnet restore
     - name: Build
@@ -84,6 +86,7 @@ jobs:
         dotnet-version: |
           6.0.x
           8.0.x
+          9.0.x
     - name: Install dependencies
       run: dotnet restore
     - name: Build

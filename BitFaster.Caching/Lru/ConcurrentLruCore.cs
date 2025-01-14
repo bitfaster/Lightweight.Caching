@@ -850,6 +850,151 @@ namespace BitFaster.Caching.Lru
             return new(new Proxy(lru));
         }
 
+#if NET9_0_OR_GREATER
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsCompatibleKey<TAlternateKey>(ConcurrentDictionary<K, I> d)
+            where TAlternateKey : notnull, allows ref struct
+        {
+            return d.Comparer is IAlternateEqualityComparer<TAlternateKey, K>;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static IAlternateEqualityComparer<TAlternateKey, K> GetAlternateComparer<TAlternateKey>(ConcurrentDictionary<K, I> d)
+             where TAlternateKey : notnull, allows ref struct
+        {
+            Debug.Assert(IsCompatibleKey<TAlternateKey>(d));
+            return Unsafe.As<IAlternateEqualityComparer<TAlternateKey, K>>(d.Comparer!);
+        }
+
+        public IAlternateCache<TAlternateKey, K, V> GetAlternateCache<TAlternateKey>() where TAlternateKey : notnull, allows ref struct
+        {
+            if (!IsCompatibleKey<TAlternateKey>(this.dictionary))
+            {
+                Throw.IncompatibleComparer();
+            }
+
+            return new AlternateCache<TAlternateKey>(this);
+        }
+
+        public bool TryGetAlternateCache<TAlternateKey>([MaybeNullWhen(false)] out IAlternateCache<TAlternateKey, K, V> lookup) where TAlternateKey : notnull, allows ref struct
+        {
+            if (IsCompatibleKey<TAlternateKey>(this.dictionary))
+            {
+                lookup = new AlternateCache<TAlternateKey>(this);
+                return true;
+            }
+
+            lookup = default;
+            return false;
+        }
+
+        // Rough idea of alternate cache interface
+        // Note: we need a sync and async variant, plumbed into ICache and IAsyncCache.
+        public interface IAlternateCache<TAlternateKey, K, V> where TAlternateKey : notnull, allows ref struct
+        {
+            bool TryGet(TAlternateKey key, [MaybeNullWhen(false)] out V value);
+
+            bool TryRemove(TAlternateKey key, [MaybeNullWhen(false)] out K actualKey, [MaybeNullWhen(false)] out V value);
+
+            V GetOrAdd(TAlternateKey altKey, Func<TAlternateKey, V> valueFactory);
+
+            V GetOrAdd<TArg>(TAlternateKey altKey, Func<TAlternateKey, TArg, V> valueFactory, TArg factoryArgument);
+
+            // TryUpdate
+            // AddOrUpdate
+        }
+
+        internal readonly struct AlternateCache<TAlternateKey> : IAlternateCache<TAlternateKey, K, V> where TAlternateKey : notnull, allows ref struct
+        {
+            /// <summary>Initialize the instance. The dictionary must have already been verified to have a compatible comparer.</summary>
+            internal AlternateCache(ConcurrentLruCore<K, V, I, P, T> lru)
+            {
+                Debug.Assert(lru is not null);
+                Debug.Assert(IsCompatibleKey<TAlternateKey>(lru.dictionary));
+                Lru = lru;
+            }
+
+            internal ConcurrentLruCore<K, V, I, P, T> Lru { get; }
+
+            public bool TryGet(TAlternateKey key, [MaybeNullWhen(false)] out V value)
+            {
+                var alternate = this.Lru.dictionary.GetAlternateLookup<TAlternateKey>();
+
+                if (alternate.TryGetValue(key, out var item))
+                {
+                    return Lru.GetOrDiscard(item, out value);
+                }
+
+                value = default;
+                Lru.telemetryPolicy.IncrementMiss();
+                return false;
+            }
+
+            public bool TryRemove(TAlternateKey key, [MaybeNullWhen(false)] out K actualKey, [MaybeNullWhen(false)] out V value)
+            {
+                var alternate = this.Lru.dictionary.GetAlternateLookup<TAlternateKey>();
+
+                if (alternate.TryGetValue(key, out var item))
+                {
+                    Lru.OnRemove(item.Key, item, ItemRemovedReason.Removed);
+                    actualKey = item.Key;
+                    value = item.Value;
+                    return true;
+                }
+
+                actualKey = default;
+                value = default;
+                return false;
+            }
+
+            public V GetOrAdd(TAlternateKey altKey, Func<TAlternateKey, V> valueFactory)
+            {
+                var alternate = this.Lru.dictionary.GetAlternateLookup<TAlternateKey>();
+
+                while (true)
+                {
+                    if (alternate.TryGetValue(altKey, out var item))
+                    {
+                        return item.Value;
+                    }
+
+                    // We cannot avoid allocating the key since it is required for item policy etc. Thus fall back to Lru for add.
+                    // The value factory may be called concurrently for the same key, but the first write to the dictionary wins.
+                    K key = GetAlternateComparer<TAlternateKey>(this.Lru.dictionary).Create(altKey);
+                    V value = valueFactory(altKey);
+                    if (Lru.TryAdd(key, value))
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            public V GetOrAdd<TArg>(TAlternateKey altKey, Func<TAlternateKey, TArg, V> valueFactory, TArg factoryArgument)
+            {
+                var alternate = this.Lru.dictionary.GetAlternateLookup<TAlternateKey>();
+
+                while (true)
+                {
+                    if (alternate.TryGetValue(altKey, out var item))
+                    {
+                        return item.Value;
+                    }
+
+                    // We cannot avoid allocating the key since it is required for item policy etc. Thus fall back to Lru for add.
+                    // The value factory may be called concurrently for the same key, but the first write to the dictionary wins.
+                    K key = GetAlternateComparer<TAlternateKey>(this.Lru.dictionary).Create(altKey);
+                    V value = valueFactory(altKey, factoryArgument);
+                    if (Lru.TryAdd(key, value))
+                    {
+                        return value;
+                    }
+                }
+            }
+        }
+
+#endif
+
         // To get JIT optimizations, policies must be structs.
         // If the structs are returned directly via properties, they will be copied. Since  
         // telemetryPolicy is a mutable struct, copy is bad. One workaround is to store the 

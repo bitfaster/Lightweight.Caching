@@ -64,8 +64,12 @@ namespace BitFaster.Caching.Lfu
         private readonly LfuCapacityPartition capacity;
 
         internal readonly DrainStatus drainStatus = new();
-        private readonly object maintenanceLock = new();
 
+#if NET9_0_OR_GREATER
+        private readonly Lock maintenanceLock = new();
+#else
+        private readonly object maintenanceLock = new();
+#endif
         private readonly IScheduler scheduler;
         private readonly Action drainBuffers;
 
@@ -481,12 +485,15 @@ namespace BitFaster.Caching.Lfu
                 return;
             }
 
+#if NET9_0_OR_GREATER
+            if (maintenanceLock.TryEnter())
+#else
             bool lockTaken = false;
-            try
+            Monitor.TryEnter(maintenanceLock, ref lockTaken);
+            if (lockTaken)
+#endif
             {
-                Monitor.TryEnter(maintenanceLock, ref lockTaken);
-
-                if (lockTaken)
+                try
                 {
                     int status = this.drainStatus.NonVolatileRead();
 
@@ -498,12 +505,16 @@ namespace BitFaster.Caching.Lfu
                     this.drainStatus.VolatileWrite(DrainStatus.ProcessingToIdle);
                     scheduler.Run(this.drainBuffers);
                 }
-            }
-            finally
-            {
-                if (lockTaken)
-                {
-                    Monitor.Exit(maintenanceLock);
+                finally
+                {                
+#if NET9_0_OR_GREATER
+                    maintenanceLock.Exit();
+#else
+                    if (lockTaken)
+                    {
+                        Monitor.Exit(maintenanceLock);
+                    }
+#endif                                     
                 }
             }
         }
